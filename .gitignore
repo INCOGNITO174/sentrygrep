@@ -12,4 +12,6 @@ Thumbs.db
 # Test files (kept local)
 testdata/
 cli/
+LEARNING_GUIDE.md
+
 

@@ -27,9 +27,10 @@ python3 -m http.server 8080
 # Open http://localhost:8080/dashboard.html
 
 # 3. Run against a real Go repo
-git clone https://github.com/civo/cli /tmp/civo-cli
-python3 scanner.py --target /tmp/civo-cli --output report.json
+git clone https://github.com/example/project /tmp/project
+python3 scanner.py --target /tmp/project --output report.json
 ```
+
 
 ## Project Structure
 

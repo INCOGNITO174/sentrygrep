@@ -1,0 +1,1165 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description"
+        content="SentryGrep Security Scanner Dashboard — View Semgrep findings by severity, CWE, and source location.">
+    <title>SentryGrep-Security Scan Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
+    <style>
+        /* ================================================================
+           DESIGN SYSTEM
+           
+           Color palette: dark mode with muted, professional security-tool
+           aesthetics. No garish primaries — everything is desaturated and
+           layered with translucency (glassmorphism).
+           
+           We use CSS custom properties (variables) so every color is
+           defined once and referenced everywhere. This makes theming
+           trivial and the stylesheet self-documenting.
+        ================================================================ */
+        :root {
+            /* Base surfaces — layered dark grays */
+            --bg-base: #0a0e17;
+            --bg-surface: rgba(15, 20, 32, 0.85);
+            --bg-surface-hover: rgba(25, 32, 50, 0.95);
+            --bg-card: rgba(18, 24, 40, 0.75);
+            --bg-card-elevated: rgba(24, 32, 52, 0.85);
+
+            /* Borders — subtle, low-contrast */
+            --border-subtle: rgba(255, 255, 255, 0.06);
+            --border-focus: rgba(255, 255, 255, 0.12);
+
+            /* Text hierarchy */
+            --text-primary: #e2e8f0;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+
+            /* Severity colors — carefully chosen for accessibility contrast */
+            --color-error: #f43f5e;
+            --color-error-bg: rgba(244, 63, 94, 0.12);
+            --color-error-glow: rgba(244, 63, 94, 0.25);
+            --color-warning: #f59e0b;
+            --color-warning-bg: rgba(245, 158, 11, 0.12);
+            --color-warning-glow: rgba(245, 158, 11, 0.25);
+            --color-info: #3b82f6;
+            --color-info-bg: rgba(59, 130, 246, 0.12);
+            --color-info-glow: rgba(59, 130, 246, 0.25);
+            --color-pass: #10b981;
+            --color-pass-bg: rgba(16, 185, 129, 0.12);
+
+            /* Accent */
+            --accent: #8b5cf6;
+            --accent-glow: rgba(139, 92, 246, 0.2);
+
+            /* Typography */
+            --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+            /* Spacing scale */
+            --space-xs: 4px;
+            --space-sm: 8px;
+            --space-md: 16px;
+            --space-lg: 24px;
+            --space-xl: 32px;
+            --space-2xl: 48px;
+
+            /* Radii */
+            --radius-sm: 6px;
+            --radius-md: 10px;
+            --radius-lg: 16px;
+        }
+
+        /* ================================================================
+           RESET & BASE
+        ================================================================ */
+        *,
+        *::before,
+        *::after {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: var(--font-sans);
+            background: var(--bg-base);
+            color: var(--text-primary);
+            line-height: 1.6;
+            min-height: 100vh;
+            /* Subtle radial gradient adds depth to the background */
+            background-image:
+                radial-gradient(ellipse at 20% 0%, rgba(139, 92, 246, 0.08) 0%, transparent 60%),
+                radial-gradient(ellipse at 80% 100%, rgba(59, 130, 246, 0.06) 0%, transparent 60%);
+        }
+
+        /* ================================================================
+           LAYOUT
+        ================================================================ */
+        .container {
+            max-width: 1280px;
+            margin: 0 auto;
+            padding: var(--space-lg) var(--space-lg) var(--space-2xl);
+        }
+
+        /* ================================================================
+           HEADER
+        ================================================================ */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: var(--space-lg) 0;
+            margin-bottom: var(--space-xl);
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .header-brand {
+            display: flex;
+            align-items: center;
+            gap: var(--space-md);
+        }
+
+        .header-logo {
+            width: 40px;
+            height: 40px;
+            border-radius: var(--radius-md);
+            background: linear-gradient(135deg, var(--accent), var(--color-error));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            font-weight: 700;
+            color: white;
+            box-shadow: 0 0 20px var(--accent-glow);
+        }
+
+        .header-title {
+            font-size: 22px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+        }
+
+        .header-subtitle {
+            font-size: 13px;
+            color: var(--text-muted);
+            font-weight: 400;
+        }
+
+        .header-meta {
+            text-align: right;
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        .header-meta span {
+            display: block;
+        }
+
+        /* ================================================================
+           STAT CARDS ROW
+           Glassmorphic cards with backdrop-filter blur
+        ================================================================ */
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: var(--space-md);
+            margin-bottom: var(--space-xl);
+        }
+
+        .stat-card {
+            background: var(--bg-card);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            padding: var(--space-lg);
+            position: relative;
+            overflow: hidden;
+            transition: transform 0.2s ease, border-color 0.2s ease;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-2px);
+            border-color: var(--border-focus);
+        }
+
+        /* Colored top accent line */
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+        }
+
+        .stat-card--total::before {
+            background: var(--accent);
+        }
+
+        .stat-card--error::before {
+            background: var(--color-error);
+        }
+
+        .stat-card--warning::before {
+            background: var(--color-warning);
+        }
+
+        .stat-card--info::before {
+            background: var(--color-info);
+        }
+
+        .stat-card__label {
+            font-size: 13px;
+            color: var(--text-muted);
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: var(--space-sm);
+        }
+
+        .stat-card__value {
+            font-size: 36px;
+            font-weight: 700;
+            letter-spacing: -1px;
+            line-height: 1;
+        }
+
+        .stat-card--total .stat-card__value {
+            color: var(--text-primary);
+        }
+
+        .stat-card--error .stat-card__value {
+            color: var(--color-error);
+        }
+
+        .stat-card--warning .stat-card__value {
+            color: var(--color-warning);
+        }
+
+        .stat-card--info .stat-card__value {
+            color: var(--color-info);
+        }
+
+        /* ================================================================
+           CHARTS SECTION
+        ================================================================ */
+        .charts-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: var(--space-md);
+            margin-bottom: var(--space-xl);
+        }
+
+        .chart-card {
+            background: var(--bg-card);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            padding: var(--space-lg);
+        }
+
+        .chart-card__title {
+            font-size: 15px;
+            font-weight: 600;
+            margin-bottom: var(--space-lg);
+            color: var(--text-secondary);
+        }
+
+        /* --- Severity bar chart (pure CSS) --- */
+        .severity-bars {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-md);
+        }
+
+        .sev-bar {
+            display: grid;
+            grid-template-columns: 80px 1fr 40px;
+            align-items: center;
+            gap: var(--space-md);
+        }
+
+        .sev-bar__label {
+            font-size: 13px;
+            font-weight: 600;
+            font-family: var(--font-mono);
+        }
+
+        .sev-bar__track {
+            height: 28px;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: var(--radius-sm);
+            overflow: hidden;
+            position: relative;
+        }
+
+        .sev-bar__fill {
+            height: 100%;
+            border-radius: var(--radius-sm);
+            transition: width 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+            width: 0;
+            /* animated in JS */
+            position: relative;
+        }
+
+        .sev-bar__fill--error {
+            background: linear-gradient(90deg, var(--color-error), rgba(244, 63, 94, 0.6));
+            box-shadow: 0 0 12px var(--color-error-glow);
+        }
+
+        .sev-bar__fill--warning {
+            background: linear-gradient(90deg, var(--color-warning), rgba(245, 158, 11, 0.6));
+            box-shadow: 0 0 12px var(--color-warning-glow);
+        }
+
+        .sev-bar__fill--info {
+            background: linear-gradient(90deg, var(--color-info), rgba(59, 130, 246, 0.6));
+            box-shadow: 0 0 12px var(--color-info-glow);
+        }
+
+        .sev-bar__count {
+            font-size: 14px;
+            font-weight: 600;
+            font-family: var(--font-mono);
+            text-align: right;
+        }
+
+        /* --- CWE distribution list --- */
+        .cwe-list {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-sm);
+        }
+
+        .cwe-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: var(--space-sm) var(--space-md);
+            border-radius: var(--radius-sm);
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-subtle);
+            transition: background 0.15s ease;
+        }
+
+        .cwe-item:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .cwe-item__id {
+            font-family: var(--font-mono);
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--accent);
+        }
+
+        .cwe-item__count {
+            font-family: var(--font-mono);
+            font-size: 13px;
+            font-weight: 600;
+            background: var(--bg-card-elevated);
+            padding: 2px 10px;
+            border-radius: 100px;
+            color: var(--text-secondary);
+        }
+
+        /* Donut chart — pure CSS using conic-gradient */
+        .donut-container {
+            display: flex;
+            align-items: center;
+            gap: var(--space-xl);
+            margin-bottom: var(--space-lg);
+        }
+
+        .donut {
+            width: 140px;
+            height: 140px;
+            border-radius: 50%;
+            /* conic-gradient is set dynamically via JS */
+            position: relative;
+            flex-shrink: 0;
+        }
+
+        .donut::after {
+            content: '';
+            position: absolute;
+            top: 30px;
+            left: 30px;
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background: var(--bg-card);
+        }
+
+        .donut-legend {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-sm);
+        }
+
+        .donut-legend__item {
+            display: flex;
+            align-items: center;
+            gap: var(--space-sm);
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        .donut-legend__swatch {
+            width: 10px;
+            height: 10px;
+            border-radius: 2px;
+        }
+
+        /* ================================================================
+           FINDINGS TABLE
+        ================================================================ */
+        .table-section {
+            background: var(--bg-card);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            overflow: hidden;
+        }
+
+        .table-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: var(--space-lg);
+            border-bottom: 1px solid var(--border-subtle);
+            flex-wrap: wrap;
+            gap: var(--space-md);
+        }
+
+        .table-header__title {
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text-secondary);
+        }
+
+        .table-controls {
+            display: flex;
+            gap: var(--space-sm);
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        /* Filter/search inputs */
+        .filter-input {
+            background: var(--bg-card-elevated);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            padding: var(--space-sm) var(--space-md);
+            color: var(--text-primary);
+            font-family: var(--font-sans);
+            font-size: 13px;
+            outline: none;
+            transition: border-color 0.15s ease;
+            min-width: 200px;
+        }
+
+        .filter-input:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 2px var(--accent-glow);
+        }
+
+        .filter-input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .filter-select {
+            background: var(--bg-card-elevated);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            padding: var(--space-sm) var(--space-md);
+            color: var(--text-primary);
+            font-family: var(--font-sans);
+            font-size: 13px;
+            outline: none;
+            cursor: pointer;
+            transition: border-color 0.15s ease;
+        }
+
+        .filter-select:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 2px var(--accent-glow);
+        }
+
+        /* Table */
+        .findings-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .findings-table thead th {
+            text-align: left;
+            padding: var(--space-md) var(--space-lg);
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+            border-bottom: 1px solid var(--border-subtle);
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+            transition: color 0.15s ease;
+        }
+
+        .findings-table thead th:hover {
+            color: var(--text-secondary);
+        }
+
+        .findings-table thead th.sorted-asc::after {
+            content: ' ↑';
+            color: var(--accent);
+        }
+
+        .findings-table thead th.sorted-desc::after {
+            content: ' ↓';
+            color: var(--accent);
+        }
+
+        .findings-table tbody tr {
+            border-bottom: 1px solid var(--border-subtle);
+            transition: background 0.1s ease;
+        }
+
+        .findings-table tbody tr:hover {
+            background: var(--bg-surface-hover);
+        }
+
+        .findings-table tbody td {
+            padding: var(--space-md) var(--space-lg);
+            font-size: 13px;
+            vertical-align: top;
+        }
+
+        /* Severity badge */
+        .severity-badge {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 100px;
+            font-size: 11px;
+            font-weight: 600;
+            font-family: var(--font-mono);
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+
+        .severity-badge--ERROR {
+            background: var(--color-error-bg);
+            color: var(--color-error);
+            box-shadow: 0 0 8px var(--color-error-glow);
+        }
+
+        .severity-badge--WARNING {
+            background: var(--color-warning-bg);
+            color: var(--color-warning);
+            box-shadow: 0 0 8px var(--color-warning-glow);
+        }
+
+        .severity-badge--INFO {
+            background: var(--color-info-bg);
+            color: var(--color-info);
+            box-shadow: 0 0 8px var(--color-info-glow);
+        }
+
+        /* CWE tag */
+        .cwe-tag {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--accent);
+            background: var(--accent-glow);
+            padding: 2px 8px;
+            border-radius: var(--radius-sm);
+        }
+
+        /* File location */
+        .file-location {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .file-location__line {
+            color: var(--color-warning);
+        }
+
+        /* Code snippet */
+        .snippet {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            background: rgba(0, 0, 0, 0.3);
+            padding: var(--space-sm) var(--space-md);
+            border-radius: var(--radius-sm);
+            color: var(--text-secondary);
+            max-width: 420px;
+            overflow-x: auto;
+            white-space: pre;
+            border: 1px solid var(--border-subtle);
+        }
+
+        /* Message column */
+        .finding-message {
+            font-size: 13px;
+            color: var(--text-secondary);
+            max-width: 320px;
+            line-height: 1.5;
+        }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: var(--space-2xl);
+            color: var(--text-muted);
+        }
+
+        .empty-state__icon {
+            font-size: 48px;
+            margin-bottom: var(--space-md);
+        }
+
+        /* Loading state */
+        .loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 400px;
+            gap: var(--space-md);
+        }
+
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid var(--border-subtle);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* Error banner */
+        .error-banner {
+            background: var(--color-error-bg);
+            border: 1px solid rgba(244, 63, 94, 0.3);
+            border-radius: var(--radius-md);
+            padding: var(--space-lg);
+            margin-bottom: var(--space-xl);
+            color: var(--color-error);
+            font-size: 14px;
+        }
+
+        .error-banner code {
+            font-family: var(--font-mono);
+            background: rgba(0, 0, 0, 0.3);
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 13px;
+        }
+
+        /* Pass state */
+        .pass-banner {
+            background: var(--color-pass-bg);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: var(--radius-lg);
+            padding: var(--space-2xl);
+            text-align: center;
+            margin-bottom: var(--space-xl);
+        }
+
+        .pass-banner__icon {
+            font-size: 48px;
+            margin-bottom: var(--space-md);
+        }
+
+        .pass-banner__text {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--color-pass);
+        }
+
+        /* ================================================================
+           ANIMATIONS
+        ================================================================ */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(12px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .animate-in {
+            animation: fadeInUp 0.4s ease forwards;
+            opacity: 0;
+        }
+
+        .animate-in:nth-child(1) {
+            animation-delay: 0.05s;
+        }
+
+        .animate-in:nth-child(2) {
+            animation-delay: 0.1s;
+        }
+
+        .animate-in:nth-child(3) {
+            animation-delay: 0.15s;
+        }
+
+        .animate-in:nth-child(4) {
+            animation-delay: 0.2s;
+        }
+
+        /* ================================================================
+           RESPONSIVE
+        ================================================================ */
+        @media (max-width: 900px) {
+            .stats-row {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .charts-row {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 600px) {
+            .stats-row {
+                grid-template-columns: 1fr;
+            }
+
+            .header {
+                flex-direction: column;
+                gap: var(--space-md);
+                text-align: center;
+            }
+
+            .header-meta {
+                text-align: center;
+            }
+
+            .container {
+                padding: var(--space-md);
+            }
+        }
+
+        /* Table horizontal scroll on small screens */
+        .table-scroll {
+            overflow-x: auto;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container" id="app">
+        <!-- Populated by JavaScript -->
+        <div class="loading" id="loading-state">
+            <div class="loading-spinner"></div>
+            <span style="color: var(--text-muted); font-size: 14px;">Loading scan report…</span>
+        </div>
+    </div>
+
+    <script>
+        /*
+         * ====================================================================
+         * SentryGrep Dashboard — Pure Vanilla JS
+         *
+         * Architecture: single fetch() → render functions → DOM.
+         * No virtual DOM, no reactivity framework, no state management.
+         *
+         * WHY no framework?
+         *   - This page renders ONCE from static JSON. There's no user-driven
+         *     state mutation that would benefit from React's reconciliation.
+         *   - Filters work by toggling CSS display — no re-render needed.
+         *   - Total JS is ~200 lines. A framework would add 40KB+ for no gain.
+         *
+         * NON-OBVIOUS FEATURES TO KNOW:
+         *   - fetch() requires HTTP serving (file:// blocks CORS).
+         *     Run: python3 -m http.server 8080
+         *   - conic-gradient() for the donut chart — CSS Images Level 4 spec,
+         *     supported in all modern browsers since 2020.
+         *   - backdrop-filter for glassmorphism — CSS Filters Level 2,
+         *     needs -webkit- prefix for Safari.
+         * ====================================================================
+         */
+
+        const SEVERITY_COLORS = {
+            ERROR: 'var(--color-error)',
+            WARNING: 'var(--color-warning)',
+            INFO: 'var(--color-info)',
+        };
+
+        const SEVERITY_ORDER = { ERROR: 0, WARNING: 1, INFO: 2 };
+
+        // ── Data Loading ──────────────────────────────────────────────────
+
+        async function loadReport() {
+            try {
+                const resp = await fetch('report.json');
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+                return await resp.json();
+            } catch (err) {
+                showError(err.message);
+                return null;
+            }
+        }
+
+        function showError(msg) {
+            document.getElementById('app').innerHTML = `
+            <div class="header">
+                <div class="header-brand">
+                    <div class="header-logo">S</div>
+                    <div>
+                        <div class="header-title">SentryGrep</div>
+                        <div class="header-subtitle">Security Scan Dashboard</div>
+                    </div>
+                </div>
+            </div>
+            <div class="error-banner">
+                <strong>Failed to load report.</strong><br><br>
+                ${escapeHtml(msg)}<br><br>
+                Make sure <code>report.json</code> exists in the same directory and you're
+                serving via HTTP:<br>
+                <code>python3 -m http.server 8080</code>
+            </div>
+        `;
+        }
+
+        // ── Rendering ─────────────────────────────────────────────────────
+
+        function render(report) {
+            const app = document.getElementById('app');
+            const ts = new Date(report.scan_timestamp);
+            const timeStr = ts.toLocaleString();
+
+            // Collect unique CWEs and severities for filter dropdowns
+            const allCWEs = [...new Set(report.findings.map(f => f.cwe))].sort();
+            const allSeverities = ['ERROR', 'WARNING', 'INFO'];
+
+            app.innerHTML = `
+            <!-- HEADER -->
+            <header class="header animate-in">
+                <div class="header-brand">
+                    <div class="header-logo">S</div>
+                    <div>
+                        <div class="header-title">SentryGrep</div>
+                        <div class="header-subtitle">Security Scan Dashboard</div>
+                    </div>
+                </div>
+                <div class="header-meta">
+                    <span>Scanned: <strong>${escapeHtml(timeStr)}</strong></span>
+                    <span style="color: var(--text-muted); font-size: 12px; margin-top: 2px;">
+                        ${report.total_findings} finding${report.total_findings !== 1 ? 's' : ''} detected
+                    </span>
+                </div>
+            </header>
+
+            ${report.total_findings === 0 ? renderPassState() : `
+                <!-- STAT CARDS -->
+                <div class="stats-row">
+                    ${renderStatCard('Total Findings', report.total_findings, 'total')}
+                    ${renderStatCard('Error', report.by_severity.ERROR || 0, 'error')}
+                    ${renderStatCard('Warning', report.by_severity.WARNING || 0, 'warning')}
+                    ${renderStatCard('Info', report.by_severity.INFO || 0, 'info')}
+                </div>
+
+                <!-- CHARTS -->
+                <div class="charts-row">
+                    <div class="chart-card animate-in">
+                        <div class="chart-card__title">Severity Distribution</div>
+                        <div class="donut-container">
+                            <div class="donut" id="severity-donut"></div>
+                            <div class="donut-legend" id="severity-legend"></div>
+                        </div>
+                        <div class="severity-bars" id="severity-bars"></div>
+                    </div>
+                    <div class="chart-card animate-in">
+                        <div class="chart-card__title">Findings by CWE</div>
+                        <div class="cwe-list" id="cwe-list"></div>
+                    </div>
+                </div>
+
+                <!-- FINDINGS TABLE -->
+                <div class="table-section animate-in">
+                    <div class="table-header">
+                        <div class="table-header__title">All Findings</div>
+                        <div class="table-controls">
+                            <input type="text" class="filter-input" id="filter-search"
+                                   placeholder="Search file, message, snippet…">
+                            <select class="filter-select" id="filter-severity">
+                                <option value="">All Severities</option>
+                                ${allSeverities.map(s => `<option value="${s}">${s}</option>`).join('')}
+                            </select>
+                            <select class="filter-select" id="filter-cwe">
+                                <option value="">All CWEs</option>
+                                ${allCWEs.map(c => `<option value="${c}">${c}</option>`).join('')}
+                            </select>
+                        </div>
+                    </div>
+                    <div class="table-scroll">
+                        <table class="findings-table">
+                            <thead>
+                                <tr>
+                                    <th data-sort="severity">Severity</th>
+                                    <th data-sort="cwe">CWE</th>
+                                    <th data-sort="file">Location</th>
+                                    <th>Snippet</th>
+                                    <th>Message</th>
+                                </tr>
+                            </thead>
+                            <tbody id="findings-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            `}
+        `;
+
+            if (report.total_findings > 0) {
+                renderSeverityBars(report.by_severity);
+                renderDonut(report.by_severity);
+                renderCWEList(report.by_cwe);
+                renderFindings(report.findings);
+                attachFilters(report.findings);
+                attachSorting(report.findings);
+            }
+        }
+
+        function renderPassState() {
+            return `
+            <div class="pass-banner animate-in">
+                <div class="pass-banner__icon">✅</div>
+                <div class="pass-banner__text">No security findings detected</div>
+            </div>
+        `;
+        }
+
+        function renderStatCard(label, value, type) {
+            return `
+            <div class="stat-card stat-card--${type} animate-in">
+                <div class="stat-card__label">${label}</div>
+                <div class="stat-card__value">${value}</div>
+            </div>
+        `;
+        }
+
+        function renderSeverityBars(bySeverity) {
+            const container = document.getElementById('severity-bars');
+            const max = Math.max(...Object.values(bySeverity), 1);
+
+            container.innerHTML = ['ERROR', 'WARNING', 'INFO'].map(sev => {
+                const count = bySeverity[sev] || 0;
+                const pct = (count / max) * 100;
+                return `
+                <div class="sev-bar">
+                    <span class="sev-bar__label" style="color: ${SEVERITY_COLORS[sev]}">${sev}</span>
+                    <div class="sev-bar__track">
+                        <div class="sev-bar__fill sev-bar__fill--${sev.toLowerCase()}"
+                             id="bar-${sev}"></div>
+                    </div>
+                    <span class="sev-bar__count">${count}</span>
+                </div>
+            `;
+            }).join('');
+
+            // Animate bars after a tick (so transition triggers)
+            requestAnimationFrame(() => {
+                ['ERROR', 'WARNING', 'INFO'].forEach(sev => {
+                    const count = bySeverity[sev] || 0;
+                    const pct = (count / max) * 100;
+                    const bar = document.getElementById(`bar-${sev}`);
+                    if (bar) bar.style.width = `${pct}%`;
+                });
+            });
+        }
+
+        function renderDonut(bySeverity) {
+            const donut = document.getElementById('severity-donut');
+            const legend = document.getElementById('severity-legend');
+            const total = Object.values(bySeverity).reduce((a, b) => a + b, 0) || 1;
+
+            // Build conic-gradient segments
+            // conic-gradient paints sectors of a circle — each from a start angle to end angle
+            let cumulative = 0;
+            const segments = [];
+
+            ['ERROR', 'WARNING', 'INFO'].forEach(sev => {
+                const count = bySeverity[sev] || 0;
+                const pct = (count / total) * 100;
+                if (pct > 0) {
+                    segments.push(`${SEVERITY_COLORS[sev]} ${cumulative}% ${cumulative + pct}%`);
+                }
+                cumulative += pct;
+            });
+
+            if (segments.length === 0) {
+                segments.push('var(--border-subtle) 0% 100%');
+            }
+
+            donut.style.background = `conic-gradient(${segments.join(', ')})`;
+
+            legend.innerHTML = ['ERROR', 'WARNING', 'INFO'].map(sev => {
+                const count = bySeverity[sev] || 0;
+                const pct = ((count / total) * 100).toFixed(1);
+                return `
+                <div class="donut-legend__item">
+                    <div class="donut-legend__swatch" style="background: ${SEVERITY_COLORS[sev]}"></div>
+                    <span>${sev}: ${count} (${pct}%)</span>
+                </div>
+            `;
+            }).join('');
+        }
+
+        function renderCWEList(byCWE) {
+            const container = document.getElementById('cwe-list');
+            const sorted = Object.entries(byCWE).sort((a, b) => b[1] - a[1]);
+
+            container.innerHTML = sorted.map(([cwe, count]) => `
+            <div class="cwe-item">
+                <span class="cwe-item__id">${escapeHtml(cwe)}</span>
+                <span class="cwe-item__count">${count}</span>
+            </div>
+        `).join('');
+        }
+
+        function renderFindings(findings) {
+            const tbody = document.getElementById('findings-body');
+            tbody.innerHTML = findings.map((f, i) => `
+            <tr data-index="${i}">
+                <td><span class="severity-badge severity-badge--${f.severity}">${f.severity}</span></td>
+                <td><span class="cwe-tag">${escapeHtml(f.cwe)}</span></td>
+                <td>
+                    <div class="file-location">
+                        ${escapeHtml(f.file)}:<span class="file-location__line">${f.line}</span>
+                    </div>
+                </td>
+                <td>${f.snippet ? `<pre class="snippet">${escapeHtml(f.snippet)}</pre>` : '<span style="color: var(--text-muted)">—</span>'}</td>
+                <td><div class="finding-message">${escapeHtml(truncate(f.message, 150))}</div></td>
+            </tr>
+        `).join('');
+        }
+
+        // ── Filters ───────────────────────────────────────────────────────
+
+        /*
+         * WHY client-side filtering instead of re-fetching?
+         *   The report is a static JSON file, not an API. All data is already
+         *   in memory. We just toggle row visibility with display:none — no
+         *   DOM reconstruction, no re-render, instant response.
+         */
+        function attachFilters(findings) {
+            const searchInput = document.getElementById('filter-search');
+            const sevSelect = document.getElementById('filter-severity');
+            const cweSelect = document.getElementById('filter-cwe');
+
+            function applyFilters() {
+                const searchTerm = searchInput.value.toLowerCase();
+                const sevFilter = sevSelect.value;
+                const cweFilter = cweSelect.value;
+
+                const tbody = document.getElementById('findings-body');
+                const rows = tbody.querySelectorAll('tr');
+
+                rows.forEach((row, i) => {
+                    const f = findings[parseInt(row.dataset.index)];
+                    const matchesSearch = !searchTerm ||
+                        f.file.toLowerCase().includes(searchTerm) ||
+                        f.message.toLowerCase().includes(searchTerm) ||
+                        (f.snippet && f.snippet.toLowerCase().includes(searchTerm)) ||
+                        f.cwe.toLowerCase().includes(searchTerm);
+                    const matchesSev = !sevFilter || f.severity === sevFilter;
+                    const matchesCwe = !cweFilter || f.cwe === cweFilter;
+
+                    row.style.display = (matchesSearch && matchesSev && matchesCwe) ? '' : 'none';
+                });
+            }
+
+            searchInput.addEventListener('input', applyFilters);
+            sevSelect.addEventListener('change', applyFilters);
+            cweSelect.addEventListener('change', applyFilters);
+        }
+
+        // ── Sorting ───────────────────────────────────────────────────────
+
+        function attachSorting(findings) {
+            const headers = document.querySelectorAll('.findings-table thead th[data-sort]');
+            let currentSort = { key: null, asc: true };
+
+            headers.forEach(th => {
+                th.addEventListener('click', () => {
+                    const key = th.dataset.sort;
+                    if (currentSort.key === key) {
+                        currentSort.asc = !currentSort.asc;
+                    } else {
+                        currentSort = { key, asc: true };
+                    }
+
+                    // Update header styles
+                    headers.forEach(h => h.classList.remove('sorted-asc', 'sorted-desc'));
+                    th.classList.add(currentSort.asc ? 'sorted-asc' : 'sorted-desc');
+
+                    // Sort findings
+                    const sorted = [...findings].sort((a, b) => {
+                        let va, vb;
+                        if (key === 'severity') {
+                            va = SEVERITY_ORDER[a.severity] ?? 99;
+                            vb = SEVERITY_ORDER[b.severity] ?? 99;
+                        } else if (key === 'file') {
+                            va = `${a.file}:${String(a.line).padStart(6, '0')}`;
+                            vb = `${b.file}:${String(b.line).padStart(6, '0')}`;
+                        } else {
+                            va = a[key] || '';
+                            vb = b[key] || '';
+                        }
+                        if (va < vb) return currentSort.asc ? -1 : 1;
+                        if (va > vb) return currentSort.asc ? 1 : -1;
+                        return 0;
+                    });
+
+                    renderFindings(sorted);
+                });
+            });
+        }
+
+        // ── Utilities ─────────────────────────────────────────────────────
+
+        function escapeHtml(str) {
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        function truncate(str, max) {
+            return str.length > max ? str.slice(0, max) + '…' : str;
+        }
+
+        // ── Init ──────────────────────────────────────────────────────────
+
+        loadReport().then(report => {
+            if (report) render(report);
+        });
+    </script>
+</body>
+
+</html>

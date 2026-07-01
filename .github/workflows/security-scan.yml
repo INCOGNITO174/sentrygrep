@@ -1,0 +1,285 @@
+# =============================================================================
+# SentryGrep CI — GitHub Actions Workflow
+#
+# WHAT THIS DOES:
+#   1. Triggers on push to main OR pull request to main
+#   2. Installs Semgrep (the only external dependency)
+#   3. Runs our scanner.py with custom rules + community rules
+#   4. Uploads the JSON report as a build artifact
+#   5. Fails the build if any ERROR-severity finding exists
+#
+# WHY GITHUB ACTIONS?
+#   - Free for public repos (unlimited minutes)
+#   - YAML-based, version-controlled alongside code
+#   - Native artifact upload / PR comment support
+#   - Pre-installed Python 3 on ubuntu-latest runners
+#
+# WORKFLOW STRUCTURE:
+#   Every GitHub Actions workflow has:
+#     - `name`:     Display name in the Actions tab
+#     - `on`:       Trigger events (push, pull_request, schedule, etc.)
+#     - `jobs`:     One or more jobs that run in parallel by default
+#     - `steps`:    Sequential steps within a job
+#
+#   Each step is either:
+#     - `uses: action/name@version` — a reusable action from the marketplace
+#     - `run: command` — a shell command
+# =============================================================================
+
+name: SentryGrep Security Scan
+
+# ── Triggers ──────────────────────────────────────────────────────────────────
+# WHY both push AND pull_request?
+#   - push to main: catches issues that land on the default branch
+#   - pull_request to main: catches issues BEFORE they merge (shift-left)
+#
+# WHY not trigger on ALL branches?
+#   - Running on every feature branch push burns CI minutes
+#   - PR events already cover feature branches (they target main)
+#   - You can add more branches later if needed
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# ── Permissions ───────────────────────────────────────────────────────────────
+# WHY explicit permissions?
+#   GitHub Actions tokens default to broad read/write access. Principle of
+#   least privilege: we only need to read code and write PR comments/checks.
+#   This is a security best practice for CI workflows.
+#
+# NON-OBVIOUS: `security-events: write` is needed if you ever want to upload
+#   SARIF results to GitHub's Security tab. We don't do that yet, but it's
+#   here for future use.
+permissions:
+  contents: read
+  pull-requests: write
+
+# ── Jobs ──────────────────────────────────────────────────────────────────────
+jobs:
+  security-scan:
+    name: Run SentryGrep Scanner
+    runs-on: ubuntu-latest
+
+    # ── Strategy ──────────────────────────────────────────────────────────
+    # We're NOT using a matrix strategy here (e.g., multiple Go versions)
+    # because Semgrep scans source code — it doesn't compile or run the Go
+    # code, so the Go version is irrelevant. One runner is sufficient.
+
+    steps:
+      # ────────────────────────────────────────────────────────────────────
+      # Step 1: Check out the repository
+      #
+      # WHY actions/checkout@v4?
+      #   This is GitHub's official action to clone the repo into the
+      #   runner's workspace. Without it, the runner has an empty directory.
+      #
+      # WHY v4 specifically?
+      #   v4 uses Node.js 20 (LTS). v3 uses Node.js 16 (EOL).
+      #   Always pin to the latest major version for security patches.
+      # ────────────────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ────────────────────────────────────────────────────────────────────
+      # Step 2: Set up Python
+      #
+      # WHY actions/setup-python@v5?
+      #   ubuntu-latest has Python 3 pre-installed, but the version varies.
+      #   This action guarantees a specific version and sets up pip caching
+      #   so subsequent runs are faster.
+      #
+      # WHY Python 3.11?
+      #   It's the latest stable version with full support. Our scanner.py
+      #   uses only stdlib features available since Python 3.6 (f-strings,
+      #   pathlib), so any 3.6+ would work — but we pin to be explicit.
+      # ────────────────────────────────────────────────────────────────────
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # ────────────────────────────────────────────────────────────────────
+      # Step 3: Install Semgrep
+      #
+      # WHY pip install and not a container/action?
+      #   - `returntocorp/semgrep-action` exists but it's opinionated:
+      #     it wants you to use Semgrep App (their SaaS), uploads results
+      #     to their cloud, and hides the JSON output we need.
+      #   - Direct pip install gives us full control over flags and output.
+      #   - We pin the version for reproducibility. Unpinned = CI that
+      #     passes today might fail tomorrow when Semgrep updates.
+      #
+      # NON-OBVIOUS: `pip install semgrep` installs a ~200MB package
+      #   (includes the OCaml-compiled core engine). First run in CI
+      #   takes ~30 seconds. Subsequent runs benefit from pip caching
+      #   via actions/setup-python's built-in cache.
+      # ────────────────────────────────────────────────────────────────────
+      - name: Install Semgrep
+        run: pip install semgrep==1.167.0
+
+      # ────────────────────────────────────────────────────────────────────
+      # Step 4: Run the scanner
+      #
+      # KEY FLAGS:
+      #   --target .        → scan the entire repo
+      #   --rules rules/    → our custom CWE-78 rule
+      #   --output report.json → JSON for the dashboard
+      #   --threshold ERROR → fail (exit 1) on ERROR-severity findings
+      #
+      # WHY `continue-on-error: false` (the default)?
+      #   If scanner.py exits with code 1 (findings above threshold),
+      #   this step fails, which fails the job, which fails the PR check.
+      #   This is the "quality gate" — PRs with command injection won't merge.
+      #
+      # WHY `id: scan`?
+      #   We reference this step's outcome in later steps using:
+      #     steps.scan.outcome == 'failure'
+      #   This lets us post a PR comment only when findings exist.
+      # ────────────────────────────────────────────────────────────────────
+      - name: Run SentryGrep scanner
+        id: scan
+        continue-on-error: true
+        run: |
+          python3 scanner.py \
+            --target . \
+            --rules rules/ \
+            --output report.json \
+            --threshold ERROR
+
+      # ────────────────────────────────────────────────────────────────────
+      # Step 5: Upload the report as a build artifact
+      #
+      # WHY upload even on success?
+      #   - Failed builds: developers need the report to fix issues
+      #   - Passed builds: audit trail, you can download past reports
+      #   - The dashboard can be served from the artifact if needed
+      #
+      # WHY `if: always()`?
+      #   By default, steps after a failure are skipped. `always()` runs
+      #   this step regardless of whether the scan found issues or not.
+      #   Without it, we'd lose the report on failure — exactly when we
+      #   need it most.
+      #
+      # WHY `retention-days: 30`?
+      #   Artifacts consume storage quota. 30 days is enough to review
+      #   and fix findings without accumulating stale reports forever.
+      # ────────────────────────────────────────────────────────────────────
+      - name: Upload scan report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sentrygrep-report
+          path: report.json
+          retention-days: 30
+
+      # ────────────────────────────────────────────────────────────────────
+      # Step 6: Post findings summary as a PR comment
+      #
+      # WHY a PR comment?
+      #   - Developers see findings inline without clicking into the
+      #     Actions tab or downloading artifacts.
+      #   - PR comments create a conversation trail — team leads can
+      #     review the security findings alongside code review.
+      #
+      # WHY only on pull_request events?
+      #   Push events don't have a PR to comment on. The `if` condition
+      #   checks both: findings exist AND this is a PR.
+      #
+      # HOW the script works:
+      #   1. Python reads report.json
+      #   2. Builds a Markdown summary string
+      #   3. Writes it to $GITHUB_STEP_SUMMARY (renders in Actions tab)
+      #   4. Also posts it as a PR comment via GitHub's API
+      #
+      # NON-OBVIOUS: $GITHUB_STEP_SUMMARY
+      #   A special file path that GitHub Actions interprets as Markdown
+      #   to display in the job summary. Write Markdown to this file and
+      #   it appears in the Actions tab — no API calls needed.
+      # ────────────────────────────────────────────────────────────────────
+      - name: Post findings summary
+        if: always()
+        env:
+          SCAN_OUTCOME: ${{ steps.scan.outcome }}
+        run: |
+          python3 << 'SCRIPT'
+          import json, os
+
+          # Read the scan report
+          try:
+              with open("report.json") as f:
+                  report = json.load(f)
+          except FileNotFoundError:
+              print("No report.json found — scanner may have crashed")
+              exit(0)
+
+          total = report["total_findings"]
+          by_sev = report["by_severity"]
+          scan_outcome = os.environ.get("SCAN_OUTCOME", "unknown")
+
+          # Build Markdown summary
+          if total == 0:
+              status_icon = "✅"
+              status_text = "No security findings detected"
+          elif scan_outcome == "failure":
+              status_icon = "🚨"
+              status_text = f"**{total} security finding(s) detected — build failed**"
+          else:
+              status_icon = "⚠️"
+              status_text = f"{total} finding(s) detected (below failure threshold)"
+
+          summary = f"""## {status_icon} SentryGrep Security Scan
+
+          {status_text}
+
+          | Severity | Count |
+          |----------|-------|
+          | 🔴 ERROR | {by_sev.get('ERROR', 0)} |
+          | 🟡 WARNING | {by_sev.get('WARNING', 0)} |
+          | 🔵 INFO | {by_sev.get('INFO', 0)} |
+
+          """
+
+          # Add top findings detail (limit to 10 to avoid huge comments)
+          if total > 0:
+              summary += "### Top Findings\n\n"
+              summary += "| File | Line | Severity | CWE | Message |\n"
+              summary += "|------|------|----------|-----|---------|\n"
+              for f in report["findings"][:10]:
+                  msg = f["message"][:80] + "…" if len(f["message"]) > 80 else f["message"]
+                  summary += f"| `{f['file']}` | {f['line']} | {f['severity']} | {f['cwe']} | {msg} |\n"
+              if total > 10:
+                  summary += f"\n*...and {total - 10} more. Download the full report from build artifacts.*\n"
+
+          # Remove leading whitespace from heredoc indentation
+          import textwrap
+          summary = textwrap.dedent(summary)
+
+          # Write to GitHub Actions job summary
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "")
+          if summary_path:
+              with open(summary_path, "a") as f:
+                  f.write(summary)
+              print("Summary written to GITHUB_STEP_SUMMARY")
+          else:
+              # Local run — just print it
+              print(summary)
+
+          SCRIPT
+
+      # ────────────────────────────────────────────────────────────────────
+      # Step 7: Fail the build if scanner found ERROR-level findings
+      #
+      # WHY a separate step instead of letting Step 4 fail directly?
+      #   Because we used `continue-on-error: true` on Step 4 so that
+      #   Steps 5 and 6 (upload + comment) would still run. Now we
+      #   re-check the outcome and fail the job explicitly.
+      #
+      # This is a common CI pattern: "do work → save results → THEN fail"
+      # ────────────────────────────────────────────────────────────────────
+      - name: Enforce quality gate
+        if: steps.scan.outcome == 'failure'
+        run: |
+          echo "::error::SentryGrep found ERROR-severity security findings. See report for details."
+          exit 1

@@ -1,0 +1,15 @@
+# SentryGrep scan output (generated, not committed)
+report.json
+
+# Python
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test files (kept local)
+testdata/
+cli/
+
